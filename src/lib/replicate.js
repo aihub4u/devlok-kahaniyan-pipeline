@@ -11,35 +11,48 @@ const headers = () => ({
 
 /**
  * Kicks off a prediction and polls until it's done.
- * Returns { output, predictTime } - predictTime (seconds) is used for cost estimation,
- * since Replicate bills by compute time, not per-call.
+ * Retries on failure with backoff, since Replicate occasionally returns transient
+ * internal errors (e.g. "Director: unexpected error handling prediction") that
+ * typically succeed on a retry - without this, one flaky response kills an entire
+ * episode even after several scenes' worth of successful (paid) work already happened.
  */
-async function runModel(model, input) {
-  const create = await axios.post(
-    `${REPLICATE_API}/models/${model}/predictions`,
-    { input },
-    { headers: headers() }
-  );
+async function runModel(model, input, retries = 2) {
+  let lastError;
 
-  let prediction = create.data;
-  const pollUrl = prediction.urls.get;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const create = await axios.post(
+        `${REPLICATE_API}/models/${model}/predictions`,
+        { input },
+        { headers: headers() }
+      );
 
-  // Poll every 3s until the model finishes. Video models can take 1-3 min.
-  while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
-    await new Promise((r) => setTimeout(r, 3000));
-    const poll = await axios.get(pollUrl, { headers: headers() });
-    prediction = poll.data;
+      let prediction = create.data;
+      const pollUrl = prediction.urls.get;
+
+      // Poll every 3s until the model finishes. Video models can take 1-3 min.
+      while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
+        await new Promise((r) => setTimeout(r, 3000));
+        const poll = await axios.get(pollUrl, { headers: headers() });
+        prediction = poll.data;
+      }
+
+      if (prediction.status === 'failed') {
+        throw new Error(`Replicate prediction failed: ${JSON.stringify(prediction.error)}`);
+      }
+
+      return { output: prediction.output };
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        const backoffMs = 3000 * (attempt + 1);
+        console.log(`Replicate call failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${backoffMs}ms: ${err.message}`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
   }
 
-  if (prediction.status === 'failed') {
-    throw new Error(`Replicate prediction failed: ${JSON.stringify(prediction.error)}`);
-  }
-
-  const predictTime = prediction.metrics && prediction.metrics.predict_time
-    ? prediction.metrics.predict_time
-    : null;
-
-  return { output: prediction.output, predictTime };
+  throw lastError;
 }
 
 async function downloadFile(url, outPath) {
