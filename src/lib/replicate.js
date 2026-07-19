@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 
 const REPLICATE_API = 'https://api.replicate.com/v1';
+const REQUEST_TIMEOUT_MS = 30 * 1000; // per HTTP request - prevents a single stuck
+// network call from hanging forever regardless of any outer retry/timeout logic
 
 const headers = () => ({
   Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
@@ -12,10 +14,15 @@ const headers = () => ({
 /**
  * Kicks off a prediction and polls until it's done.
  * Retries on failure with backoff, since Replicate occasionally returns transient
- * internal errors (e.g. "Director: unexpected error handling prediction") that
- * typically succeed on a retry - without this, one flaky response kills an entire
- * episode even after several scenes' worth of successful (paid) work already happened.
+ * internal errors that typically succeed on a retry.
+ *
+ * IMPORTANT: every individual axios call below has its own `timeout` set. Without
+ * this, a single stuck network request (no response ever arriving) hangs forever -
+ * axios has no default timeout, and a timer that only checks time BETWEEN poll
+ * iterations can't catch a hang that happens INSIDE one of those awaits.
  */
+const POLL_TIMEOUT_MS = 3 * 60 * 1000; // overall ceiling per attempt across all polls
+
 async function runModel(model, input, retries = 2) {
   let lastError;
 
@@ -24,16 +31,19 @@ async function runModel(model, input, retries = 2) {
       const create = await axios.post(
         `${REPLICATE_API}/models/${model}/predictions`,
         { input },
-        { headers: headers() }
+        { headers: headers(), timeout: REQUEST_TIMEOUT_MS }
       );
 
       let prediction = create.data;
       const pollUrl = prediction.urls.get;
+      const startTime = Date.now();
 
-      // Poll every 3s until the model finishes. Video models can take 1-3 min.
       while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
+        if (Date.now() - startTime > POLL_TIMEOUT_MS) {
+          throw new Error(`Replicate prediction timed out after ${POLL_TIMEOUT_MS / 1000}s (last status: ${prediction.status})`);
+        }
         await new Promise((r) => setTimeout(r, 3000));
-        const poll = await axios.get(pollUrl, { headers: headers() });
+        const poll = await axios.get(pollUrl, { headers: headers(), timeout: REQUEST_TIMEOUT_MS });
         prediction = poll.data;
       }
 
@@ -44,9 +54,10 @@ async function runModel(model, input, retries = 2) {
       return { output: prediction.output };
     } catch (err) {
       lastError = err;
+      const reason = err.code === 'ECONNABORTED' ? 'request timed out' : err.message;
       if (attempt < retries) {
         const backoffMs = 3000 * (attempt + 1);
-        console.log(`Replicate call failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${backoffMs}ms: ${err.message}`);
+        console.log(`Replicate call failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${backoffMs}ms: ${reason}`);
         await new Promise((r) => setTimeout(r, backoffMs));
       }
     }
@@ -56,7 +67,10 @@ async function runModel(model, input, retries = 2) {
 }
 
 async function downloadFile(url, outPath) {
-  const response = await axios.get(url, { responseType: 'arraybuffer' });
+  const response = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: REQUEST_TIMEOUT_MS,
+  });
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, response.data);
   return outPath;
