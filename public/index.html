@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Devlok Kahaniyan — Episode Generator</title>
+<style>
+  :root {
+    --peacock: #0f6674;
+    --peacock-dark: #0a4650;
+    --gold: #d9a441;
+    --coral: #e8836f;
+    --cream: #fdf8f0;
+    --ink: #2b2320;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--cream);
+    color: var(--ink);
+  }
+  header {
+    background: linear-gradient(135deg, var(--peacock), var(--peacock-dark));
+    color: white;
+    padding: 28px 24px;
+    text-align: center;
+  }
+  header h1 { margin: 0; font-size: 24px; letter-spacing: 0.3px; }
+  header p { margin: 6px 0 0; opacity: 0.85; font-size: 14px; }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 28px 20px 80px;
+  }
+  .card {
+    background: white;
+    border-radius: 14px;
+    padding: 22px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 10px rgba(15, 102, 116, 0.08);
+    border: 1px solid rgba(15, 102, 116, 0.08);
+  }
+  label {
+    display: block;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--peacock-dark);
+    margin-bottom: 6px;
+    margin-top: 14px;
+  }
+  label:first-child { margin-top: 0; }
+  input[type="text"], textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid #e3d9c8;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+  }
+  textarea { min-height: 60px; }
+  input:focus, textarea:focus {
+    outline: none;
+    border-color: var(--peacock);
+  }
+  .scene {
+    border: 1.5px dashed #e3d9c8;
+    border-radius: 10px;
+    padding: 16px;
+    margin-top: 14px;
+    position: relative;
+  }
+  .scene-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .scene-header span { font-weight: 700; color: var(--coral); font-size: 13px; }
+  .remove-scene {
+    background: none;
+    border: none;
+    color: #b0473a;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .btn {
+    display: inline-block;
+    border: none;
+    border-radius: 8px;
+    padding: 11px 20px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .btn-primary { background: var(--peacock); color: white; }
+  .btn-primary:hover { background: var(--peacock-dark); }
+  .btn-secondary { background: var(--gold); color: var(--ink); }
+  .btn-secondary:hover { filter: brightness(0.95); }
+  .btn-primary:disabled { background: #b7c4c6; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+  #progressWrap { display: none; margin-top: 20px; }
+  .progress-bar-bg {
+    background: #f0e6d2;
+    border-radius: 20px;
+    height: 14px;
+    overflow: hidden;
+  }
+  .progress-bar-fill {
+    background: linear-gradient(90deg, var(--gold), var(--coral));
+    height: 100%;
+    width: 0%;
+    transition: width 0.4s ease;
+  }
+  #progressMsg { font-size: 13px; margin-top: 8px; color: var(--peacock-dark); }
+  #resultWrap { display: none; margin-top: 20px; text-align: center; }
+  #resultWrap video { width: 100%; border-radius: 10px; margin-bottom: 12px; background: black; }
+  #errorWrap {
+    display: none;
+    margin-top: 16px;
+    background: #fbeae7;
+    border: 1px solid #e8836f;
+    color: #a3402f;
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .hint { font-size: 12px; color: #8a7d68; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🪈 Devlok Kahaniyan</h1>
+  <p>Where every story teaches — episode generator</p>
+</header>
+
+<main>
+  <div class="card">
+    <label>Episode ID</label>
+    <input type="text" id="episodeId" placeholder="s1e01-makhan-chor" />
+    <div class="hint">Lowercase, no spaces — used as the output folder name</div>
+
+    <label>Title</label>
+    <input type="text" id="title" placeholder="Krishna Steals the Butter" />
+
+    <label>Reference image prompt (locks Krishna's look for the whole episode)</label>
+    <textarea id="referenceImagePrompt" placeholder="A warm, hand-illustrated children's storybook portrait of young Krishna, blue skin, playful smile, peacock feather in dark hair, yellow dhoti..."></textarea>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <strong style="color: var(--peacock-dark);">Scenes</strong>
+      <button class="btn btn-secondary" onclick="addScene()">+ Add scene</button>
+    </div>
+    <div id="scenesContainer"></div>
+  </div>
+
+  <div class="row">
+    <button class="btn btn-secondary" onclick="loadSample()">Load sample episode</button>
+    <button class="btn btn-primary" id="generateBtn" onclick="submitEpisode()">Generate episode</button>
+  </div>
+
+  <div id="errorWrap"></div>
+
+  <div id="progressWrap" class="card">
+    <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+    <div id="progressMsg">Starting...</div>
+  </div>
+
+  <div id="resultWrap" class="card">
+    <video id="resultVideo" controls></video>
+    <a class="btn btn-primary" id="downloadLink" href="#" download>Download video</a>
+  </div>
+</main>
+
+<script>
+let sceneCount = 0;
+
+function addScene(narration = '', motionPrompt = '') {
+  sceneCount++;
+  const container = document.getElementById('scenesContainer');
+  const div = document.createElement('div');
+  div.className = 'scene';
+  div.dataset.sceneId = sceneCount;
+  div.innerHTML = `
+    <div class="scene-header">
+      <span>SCENE ${sceneCount}</span>
+      <button class="remove-scene" onclick="this.closest('.scene').remove()">Remove</button>
+    </div>
+    <label>Narration (what Sarvam will speak)</label>
+    <textarea class="narration">${narration}</textarea>
+    <label>Motion prompt (what Krishna does in this scene)</label>
+    <textarea class="motionPrompt">${motionPrompt}</textarea>
+  `;
+  container.appendChild(div);
+}
+
+function loadSample() {
+  document.getElementById('episodeId').value = 's1e01-makhan-chor';
+  document.getElementById('title').value = 'Krishna Steals the Butter';
+  document.getElementById('referenceImagePrompt').value =
+    "A warm, hand-illustrated children's storybook portrait of young Krishna, blue skin, playful smile, peacock feather in dark hair, yellow dhoti, round face with big expressive eyes, soft painterly art style, warm golden lighting, front-facing, simple village background, high detail, consistent character design sheet";
+
+  document.getElementById('scenesContainer').innerHTML = '';
+  sceneCount = 0;
+  addScene(
+    "Long ago, in the little village of Gokul, there lived a mischievous boy named Krishna. He loved only one thing more than his friends - fresh, creamy butter.",
+    "Krishna walks playfully through a sunny village lane, looking around curiously, gentle camera pan, soft breeze moving his hair"
+  );
+  addScene(
+    "One morning, Krishna crept quietly into a neighbor's kitchen, climbed onto a wooden stool, and reached into a clay pot of fresh butter.",
+    "Krishna tiptoes into a rustic kitchen, climbs a small wooden stool, reaches up toward a clay pot on a high shelf, mischievous expression"
+  );
+  addScene(
+    "But Krishna did not eat the butter alone. He shared it with his friends and even left some for the poor children of the village who had none.",
+    "Krishna sits with a group of smiling children, happily sharing butter from the pot, warm and joyful atmosphere, soft golden light"
+  );
+  addScene(
+    "This story comes from the Bhagavata Purana, Book 10, Chapter 8. It teaches us that Krishna's butter stealing was never about greed - it was about sharing.",
+    "Krishna sits peacefully under a tree holding a flute, looking gently toward the viewer, calm and warm expression, soft ambient light"
+  );
+  addScene(
+    "So the next time you have something you love, remember Krishna - the greatest joy comes from sharing it with others.",
+    "Krishna smiles warmly and waves toward the viewer, peacock feather gently swaying, soft zoom in, heartwarming close"
+  );
+}
+
+function buildPayload() {
+  const scenes = Array.from(document.querySelectorAll('.scene')).map((el) => ({
+    narration: el.querySelector('.narration').value.trim(),
+    motionPrompt: el.querySelector('.motionPrompt').value.trim(),
+  }));
+
+  return {
+    episodeId: document.getElementById('episodeId').value.trim(),
+    title: document.getElementById('title').value.trim(),
+    referenceImagePrompt: document.getElementById('referenceImagePrompt').value.trim(),
+    scenes,
+  };
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorWrap');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideError() {
+  document.getElementById('errorWrap').style.display = 'none';
+}
+
+async function submitEpisode() {
+  hideError();
+  const payload = buildPayload();
+
+  if (!payload.episodeId || !payload.referenceImagePrompt || payload.scenes.length === 0) {
+    showError('Please fill in Episode ID, the reference image prompt, and at least one scene.');
+    return;
+  }
+  for (const s of payload.scenes) {
+    if (!s.narration || !s.motionPrompt) {
+      showError('Every scene needs both narration and a motion prompt.');
+      return;
+    }
+  }
+
+  document.getElementById('generateBtn').disabled = true;
+  document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('resultWrap').style.display = 'none';
+  setProgress(0, 'Submitting episode...');
+
+  try {
+    const res = await fetch('/episodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to submit episode');
+    }
+
+    pollJob(data.jobId);
+  } catch (err) {
+    showError(err.message);
+    document.getElementById('generateBtn').disabled = false;
+  }
+}
+
+function setProgress(pct, msg) {
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressMsg').textContent = msg;
+}
+
+async function pollJob(jobId) {
+  const res = await fetch(`/episodes/${jobId}`);
+  const job = await res.json();
+
+  setProgress(job.progress || 0, job.message || 'Processing...');
+
+  if (job.state === 'completed') {
+    document.getElementById('generateBtn').disabled = false;
+    const videoUrl = job.result.videoUrl;
+    document.getElementById('resultVideo').src = videoUrl;
+    document.getElementById('downloadLink').href = videoUrl;
+    document.getElementById('resultWrap').style.display = 'block';
+    return;
+  }
+
+  if (job.state === 'failed') {
+    showError('Generation failed: ' + job.error);
+    document.getElementById('generateBtn').disabled = false;
+    return;
+  }
+
+  setTimeout(() => pollJob(jobId), 3000);
+}
+
+// Start with one empty scene so the form isn't blank
+addScene();
+</script>
+
+</body>
+</html>

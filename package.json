@@ -6,13 +6,10 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "worker": "node src/worker.js",
-    "dev": "node src/server.js"
+    "generate": "node src/generate.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "bullmq": "^5.12.0",
-    "ioredis": "^5.4.1",
     "axios": "^1.7.7",
     "dotenv": "^16.4.5",
     "fluent-ffmpeg": "^2.1.3",

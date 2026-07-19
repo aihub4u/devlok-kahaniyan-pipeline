@@ -10,46 +10,66 @@ Script (you write, or draft with ChatGPT/Claude)
   -> FFmpeg: mux narration onto each scene, then stitch all scenes into the final MP4
 ```
 
+No queue, no Redis - just a script that runs start to finish. Good fit for a solo creator
+generating a handful of episodes at a time rather than serving concurrent traffic.
+
 ## 1. Prerequisites
 
 - Node.js 18+
-- Redis running somewhere (BullMQ needs this as the job queue). Options:
-  - Local: `docker run -p 6379:6379 redis`
-  - Or a free/low-cost Redis add-on on Render (same as your other projects)
 - A [Sarvam AI](https://www.sarvam.ai/) API key
 - A [Replicate](https://replicate.com/account/api-tokens) API token
+- ffmpeg installed on your machine (fluent-ffmpeg is a wrapper, it needs the real binary)
 
 ## 2. Install
 
 ```bash
 npm install
 cp .env.example .env
-# then fill in REDIS_URL, SARVAM_API_KEY, REPLICATE_API_TOKEN in .env
+# then fill in SARVAM_API_KEY and REPLICATE_API_TOKEN in .env
 ```
 
-Also install ffmpeg on the machine/server this runs on (fluent-ffmpeg is just a wrapper, it needs the real binary):
+Install ffmpeg if you don't already have it:
 
 ```bash
-# Ubuntu/Render build step
-apt-get install -y ffmpeg
+# Ubuntu / Render build step
+apt-get update && apt-get install -y ffmpeg
+
+# Mac
+brew install ffmpeg
 ```
 
-## 3. Run
+## 3. Run it - three ways
 
-Two processes, same as your other queue-based projects (API + worker split):
+### Option A: Web UI (recommended - do everything from the browser)
 
 ```bash
-# Terminal 1 - the API that accepts new episode requests
 npm start
-
-# Terminal 2 - the worker that actually does the generation
-npm run worker
 ```
 
-## 4. Submit your first episode
+Then open **http://localhost:3000** in your browser. You'll see a form to:
+- Enter the episode ID, title, and Krishna reference image prompt
+- Add/remove scenes, each with narration + a motion prompt
+- Click **"Load sample episode"** to auto-fill the Makhan Chor example
+- Click **"Generate episode"** and watch a live progress bar
+- Preview and download the finished video right in the page once it's done
 
-The sample episode (`src/data/sample-episode.json`) is the Makhan Chor (butter-stealing) story, already
-broken into 5 scenes with narration + scripture reference + lesson baked in, matching your format.
+This is the easiest way to use the pipeline day-to-day - no terminal commands needed once
+the server is running.
+
+### Option B: CLI (good for quick one-off tests or scripting)
+
+```bash
+node src/generate.js src/data/sample-episode.json
+```
+
+Runs the whole pipeline in your terminal, printing progress as it goes, and tells you where
+the finished MP4 landed when it's done.
+
+### Option C: API directly (if you're integrating this into something else)
+
+```bash
+npm start
+```
 
 ```bash
 curl -X POST http://localhost:3000/episodes \
@@ -57,46 +77,50 @@ curl -X POST http://localhost:3000/episodes \
   -d @src/data/sample-episode.json
 ```
 
-This returns a `jobId`. Check progress with:
+Returns a `jobId` immediately while generation runs in the background. Check progress:
 
 ```bash
 curl http://localhost:3000/episodes/<jobId>
 ```
 
-When `state` is `completed`, `returnValue.finalOutputPath` points to the finished MP4 inside `./output/<episodeId>/`.
+Note: job status is stored in memory, so it resets if the server restarts, and only tracks
+jobs submitted since the last restart. That's fine for one person generating episodes in
+batches; if you ever need job history to survive restarts or run multiple server instances,
+that's when a real queue (Redis + BullMQ) earns its place - not before.
 
-## 5. What each scene needs
+## 4. What each scene needs
 
 Every scene in the JSON payload needs two things:
 
-- `narration` — the exact line(s) Sarvam will speak for this scene
-- `motionPrompt` — describes the ACTION for this scene only (Krishna's look stays locked from the
-  reference image; this prompt only controls what he's doing/moving)
+- `narration` - the exact line(s) Sarvam will speak for this scene
+- `motionPrompt` - describes the ACTION for this scene only (Krishna's look stays locked from
+  the reference image; this prompt only controls what he's doing/moving)
 
-Keep `motionPrompt`s simple and physical ("reaches for the pot", "smiles and waves") — video models
-follow concrete actions much better than abstract ones.
+Keep `motionPrompt`s simple and physical ("reaches for the pot", "smiles and waves") - video
+models follow concrete actions much better than abstract ones.
 
-## 6. Cost control knobs
+## 5. Cost control knobs
 
-- `concurrency: 1` in `worker.js` — raise this once you've validated cost-per-episode; running scenes
-  in parallel finishes faster but multiplies your simultaneous Replicate spend
-- `REPLICATE_VIDEO_MODEL` in `.env` — swap between `wan-video/wan-2.5-i2v-fast` (cheap, good for daily
-  Shorts) and a stronger model for festival/season-opener episodes. Check current per-second pricing on
-  each model's Replicate page before switching, since rates vary by model and change over time.
-- Every scene currently makes 1 image call (only once per episode, not per scene) + 1 video call +
-  1 Sarvam call. That's your main lever for cost: fewer, longer scenes = fewer paid API calls.
+- `REPLICATE_VIDEO_MODEL` in `.env` - swap between `wan-video/wan-2.5-i2v-fast` (cheap, good
+  for daily Shorts) and a stronger model for festival/season-opener episodes. Check current
+  per-second pricing on each model's Replicate page before switching, since rates vary by
+  model and change over time.
+- Every episode makes 1 image call (once, not per scene) + 1 video call per scene + 1 Sarvam
+  call per scene. Fewer, longer scenes = fewer paid API calls per episode.
+- Generate one episode first and check your actual Replicate usage dashboard before scripting
+  out a whole month's worth of episodes.
 
-## 7. Known gaps to fill in next
+## 6. Known gaps to fill in next
 
-- **Captions**: not wired up yet. Add a Whisper transcription step (via Replicate's whisper model, or
-  self-hosted) on `finalOutputPath` to burn in captions before upload — most Shorts are watched muted,
+- **Captions**: not wired up yet. Add a Whisper transcription step (via Replicate's whisper
+  model, or self-hosted) on the final output before upload - most Shorts are watched muted,
   so this matters more than almost anything else here.
-- **Auto-upload**: `.env` has placeholder YouTube fields but no upload step is wired up yet. Recommend
-  keeping a manual review step before publishing until you've checked a batch of outputs for accuracy
-  and tone — this is mythology content for kids, worth a human check before it goes live.
-- **Retry handling**: `attempts: 1` on job submission means a failed episode (e.g. a Replicate timeout)
-  won't auto-retry. Bump this once you trust the pipeline's reliability.
-- **Reference image reuse across episodes**: right now every episode generates a fresh Krishna reference
-  image. Once you find a prompt/seed that nails his look, save that image and reuse it as the `image`
-  input for the reference step instead of regenerating from a text prompt every time — this improves
+- **Auto-upload**: no YouTube/Instagram upload step yet. Recommend a manual review step before
+  publishing anyway, so you can eyeball scripture accuracy and tone before anything goes live.
+- **Reference image reuse across episodes**: right now every episode generates a fresh Krishna
+  reference image. Once you find a prompt/seed that nails his look, save that image and reuse
+  it directly as the reference input instead of regenerating from text each time - this helps
   cross-episode consistency, not just within-episode.
+- **Persistent output storage**: if you deploy this (e.g. on Render), the filesystem is
+  ephemeral - finished videos disappear on redeploy/restart unless you add a persistent disk
+  or upload the final file to S3/Cloudinary/Drive as the last pipeline step.
