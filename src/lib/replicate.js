@@ -3,25 +3,13 @@ const fs = require('fs');
 const path = require('path');
 
 const REPLICATE_API = 'https://api.replicate.com/v1';
-const REQUEST_TIMEOUT_MS = 30 * 1000; // per HTTP request - prevents a single stuck
-// network call from hanging forever regardless of any outer retry/timeout logic
+const REQUEST_TIMEOUT_MS = 30 * 1000;
+const POLL_TIMEOUT_MS = 3 * 60 * 1000;
 
 const headers = () => ({
   Authorization: `Bearer ${process.env.REPLICATE_API_TOKEN}`,
   'Content-Type': 'application/json',
 });
-
-/**
- * Kicks off a prediction and polls until it's done.
- * Retries on failure with backoff, since Replicate occasionally returns transient
- * internal errors that typically succeed on a retry.
- *
- * IMPORTANT: every individual axios call below has its own `timeout` set. Without
- * this, a single stuck network request (no response ever arriving) hangs forever -
- * axios has no default timeout, and a timer that only checks time BETWEEN poll
- * iterations can't catch a hang that happens INSIDE one of those awaits.
- */
-const POLL_TIMEOUT_MS = 3 * 60 * 1000; // overall ceiling per attempt across all polls
 
 async function runModel(model, input, retries = 2) {
   let lastError;
@@ -77,39 +65,63 @@ async function downloadFile(url, outPath) {
 }
 
 /**
- * Generates the locked Krishna reference image for the episode. This is the visual
- * anchor - its exact wording gets reused as a prefix on every scene's prompt below,
- * which is what keeps Krishna looking consistent without needing a trained LoRA or
- * paying for image-to-image/reference-based video models.
+ * Builds the correct input payload for whichever image model is configured.
+ * Different model families use different parameter names for the same concept -
+ * Flux uses "aspect_ratio", SDXL uses fixed "width"/"height" pairs. Sending the
+ * wrong shape doesn't always error clearly, so this keeps each model's actual
+ * expected schema in one place rather than guessing per call site.
  */
-async function generateReferenceImage(prompt, outPath) {
-  const { output } = await runModel(process.env.REPLICATE_IMAGE_MODEL, {
+function buildImageInput(model, prompt) {
+  if (model.includes('sdxl')) {
+    // SDXL only supports specific (width, height) pairs - arbitrary values can
+    // cause unintended cropping. 768x1344 is Stability's documented 9:16 pair.
+    const isPortrait = (process.env.IMAGE_ASPECT_RATIO || '9:16') === '9:16';
+    return {
+      prompt,
+      width: isPortrait ? 768 : 1344,
+      height: isPortrait ? 1344 : 768,
+      num_inference_steps: 30,
+      guidance_scale: 7.5,
+      scheduler: 'K_EULER',
+      negative_prompt: 'blurry, low quality, distorted, disfigured, extra limbs',
+    };
+  }
+
+  // Default: Flux-family models
+  return {
     prompt,
     aspect_ratio: process.env.IMAGE_ASPECT_RATIO || '9:16',
     output_format: 'png',
-  });
+  };
+}
 
+async function generateReferenceImage(prompt, outPath) {
+  const model = process.env.REPLICATE_IMAGE_MODEL;
+  const { output } = await runModel(model, buildImageInput(model, prompt));
   const imageUrl = Array.isArray(output) ? output[0] : output;
   return downloadFile(imageUrl, outPath);
 }
 
-/**
- * Generates one still image for a scene. `referenceImagePrompt` (Krishna's locked
- * look) is prepended verbatim so every scene shares the same character description -
- * this text-level consistency is the low-cost substitute for a trained LoRA or a
- * reference-conditioned video model.
- */
 async function generateSceneImage(referenceImagePrompt, sceneDescription, outPath) {
+  const model = process.env.REPLICATE_IMAGE_MODEL;
   const combinedPrompt = `${referenceImagePrompt}. Scene: ${sceneDescription}`;
-
-  const { output } = await runModel(process.env.REPLICATE_IMAGE_MODEL, {
-    prompt: combinedPrompt,
-    aspect_ratio: process.env.IMAGE_ASPECT_RATIO || '9:16',
-    output_format: 'png',
-  });
-
+  const { output } = await runModel(model, buildImageInput(model, combinedPrompt));
   const imageUrl = Array.isArray(output) ? output[0] : output;
   return downloadFile(imageUrl, outPath);
 }
 
-module.exports = { runModel, generateReferenceImage, generateSceneImage, downloadFile };
+async function generateSceneVideoClip(imagePath, motionPrompt, outPath) {
+  const imageBuffer = fs.readFileSync(imagePath);
+  const base64Image = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+
+  const { output } = await runModel(process.env.REPLICATE_VIDEO_MODEL || 'wan-video/wan-2.2-i2v-fast', {
+    image: base64Image,
+    prompt: motionPrompt,
+    resolution: process.env.VIDEO_RESOLUTION || '480p',
+  });
+
+  const videoUrl = Array.isArray(output) ? output[0] : output;
+  return downloadFile(videoUrl, outPath);
+}
+
+module.exports = { runModel, generateReferenceImage, generateSceneImage, generateSceneVideoClip, downloadFile };

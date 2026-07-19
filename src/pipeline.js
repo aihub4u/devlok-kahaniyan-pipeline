@@ -1,8 +1,8 @@
 const path = require('path');
 const fs = require('fs');
 const { generateVoiceover } = require('./lib/sarvam');
-const { generateReferenceImage, generateSceneImage } = require('./lib/replicate');
-const { applyKenBurns, muxSceneAudioVideo, concatScenes, getDuration } = require('./lib/assemble');
+const { generateReferenceImage, generateSceneImage, generateSceneVideoClip } = require('./lib/replicate');
+const { buildScenePicture, muxSceneAudioVideo, concatScenes, getDuration } = require('./lib/assemble');
 const {
   estimateSarvamCost,
   estimateReplicateImageCost,
@@ -12,6 +12,7 @@ const {
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR || './output';
 const COST_LOG_PATH = path.join(OUTPUT_DIR, 'cost-log.json');
+const VIDEO_COST_PER_CLIP = parseFloat(process.env.REPLICATE_VIDEO_COST_PER_CLIP || '0');
 
 function appendToCostLog(entry) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -28,11 +29,14 @@ function appendToCostLog(entry) {
 }
 
 /**
- * Runs the full pipeline: script -> voiceover -> still images (Krishna, consistent
- * across scenes via a shared prompt prefix) -> Ken Burns motion -> assembled episode.
+ * Runs the full pipeline: script -> voiceover -> still image per scene -> a short
+ * AI-animated clip of that scene's key action (Wan 2.2 I2V Fast, ~5s, cheap) ->
+ * extended with a Ken Burns pan on the clip's last frame if narration runs longer
+ * than the clip -> assembled episode.
  *
- * No AI video generation model is used - stills + FFmpeg pan/zoom keep cost to
- * fractions of a cent per scene instead of dollars per minute.
+ * This is a hybrid of the two earlier approaches: real character motion for the
+ * moment that matters in each scene, without paying full AI-video rates for every
+ * second of every episode.
  *
  * @param {object} episodeData - see src/data/sample-episode.json for the shape
  * @param {(pct: number, message: string) => void} [onProgress] - optional progress callback
@@ -54,9 +58,6 @@ async function generateEpisode(episodeData, onProgress = () => {}) {
     currency: getRates().currency,
   };
 
-  // Step 1: lock Krishna's appearance once - reused as a text prefix on every scene
-  // prompt below, which is what keeps his look consistent without paying for a
-  // trained LoRA or a reference-conditioned video model.
   onProgress(5, 'Generating reference image');
   const referenceImagePath = path.join(episodeDir, 'reference.png');
   await generateReferenceImage(referenceImagePrompt, referenceImagePath);
@@ -68,7 +69,7 @@ async function generateEpisode(episodeData, onProgress = () => {}) {
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
     const sceneTag = `scene-${String(i + 1).padStart(2, '0')}`;
-    const sceneDescription = scene.sceneDescription || scene.motionPrompt; // accepts either key
+    const sceneDescription = scene.sceneDescription || scene.motionPrompt;
 
     onProgress(5 + progressPerScene * i, `Scene ${i + 1}/${scenes.length}: narration`);
     const audioPath = path.join(episodeDir, `${sceneTag}.wav`);
@@ -76,18 +77,21 @@ async function generateEpisode(episodeData, onProgress = () => {}) {
     const sarvamCost = estimateSarvamCost(audioResult.characterCount);
     const narrationDuration = await getDuration(audioPath);
 
-    onProgress(5 + progressPerScene * i + progressPerScene * 0.3, `Scene ${i + 1}/${scenes.length}: illustrating`);
+    onProgress(5 + progressPerScene * i + progressPerScene * 0.2, `Scene ${i + 1}/${scenes.length}: illustrating`);
     const imagePath = path.join(episodeDir, `${sceneTag}.png`);
     await generateSceneImage(referenceImagePrompt, sceneDescription, imagePath);
     const imageCost = estimateReplicateImageCost(1);
 
-    onProgress(5 + progressPerScene * i + progressPerScene * 0.6, `Scene ${i + 1}/${scenes.length}: animating (Ken Burns)`);
-    const rawVideoPath = path.join(episodeDir, `${sceneTag}-raw.mp4`);
-    await applyKenBurns(imagePath, narrationDuration, rawVideoPath);
+    onProgress(5 + progressPerScene * i + progressPerScene * 0.4, `Scene ${i + 1}/${scenes.length}: animating (AI motion)`);
+    const rawClipPath = path.join(episodeDir, `${sceneTag}-raw-clip.mp4`);
+    await generateSceneVideoClip(imagePath, sceneDescription, rawClipPath);
 
-    onProgress(5 + progressPerScene * i + progressPerScene * 0.85, `Scene ${i + 1}/${scenes.length}: muxing audio`);
+    onProgress(5 + progressPerScene * i + progressPerScene * 0.7, `Scene ${i + 1}/${scenes.length}: matching to narration length`);
+    const scenePicturePath = await buildScenePicture(rawClipPath, narrationDuration, episodeDir, sceneTag);
+
+    onProgress(5 + progressPerScene * i + progressPerScene * 0.9, `Scene ${i + 1}/${scenes.length}: muxing audio`);
     const finalScenePath = path.join(episodeDir, `${sceneTag}-final.mp4`);
-    await muxSceneAudioVideo(rawVideoPath, audioPath, finalScenePath);
+    await muxSceneAudioVideo(scenePicturePath, audioPath, finalScenePath);
 
     sceneClips.push(finalScenePath);
     costBreakdown.scenes.push({
@@ -95,6 +99,7 @@ async function generateEpisode(episodeData, onProgress = () => {}) {
       sarvamCharacterCount: audioResult.characterCount,
       sarvamEstCost: sarvamCost,
       imageEstCost: imageCost,
+      videoClipEstCost: VIDEO_COST_PER_CLIP || null,
     });
 
     onProgress(5 + progressPerScene * (i + 1), `Scene ${i + 1}/${scenes.length}: done`);
@@ -106,7 +111,7 @@ async function generateEpisode(episodeData, onProgress = () => {}) {
 
   const allCosts = [
     costBreakdown.referenceImage.estCost,
-    ...costBreakdown.scenes.flatMap((s) => [s.sarvamEstCost, s.imageEstCost]),
+    ...costBreakdown.scenes.flatMap((s) => [s.sarvamEstCost, s.imageEstCost, s.videoClipEstCost]),
   ];
   costBreakdown.totalEstCost = sum(allCosts);
 

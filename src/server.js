@@ -83,6 +83,7 @@ function checkRatesConfigured() {
   const missing = [];
   if (!parseFloat(process.env.SARVAM_COST_PER_1000_CHARS || '0')) missing.push('SARVAM_COST_PER_1000_CHARS');
   if (!parseFloat(process.env.REPLICATE_IMAGE_COST_PER_IMAGE || '0')) missing.push('REPLICATE_IMAGE_COST_PER_IMAGE');
+  if (!parseFloat(process.env.REPLICATE_VIDEO_COST_PER_CLIP || '0')) missing.push('REPLICATE_VIDEO_COST_PER_CLIP');
   return missing.length > 0
     ? `Cost rates not fully configured: ${missing.join(', ')}. Set these in your environment based on your actual billing dashboards for accurate estimates.`
     : null;

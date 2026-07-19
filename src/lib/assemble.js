@@ -17,6 +17,85 @@ function getDuration(filePath) {
  * video generation model - it's free (just local FFmpeg processing) and is the
  * standard technique most story-narration channels use for illustrated content.
  */
+/**
+ * Re-encodes a video to consistent dimensions/codec settings so clips from different
+ * sources (a Wan-generated video vs an FFmpeg Ken Burns clip) can be safely concatenated.
+ */
+async function normalizeVideo(inputPath, outPath) {
+  const width = parseInt(process.env.FRAME_WIDTH || '540', 10);
+  const height = parseInt(process.env.FRAME_HEIGHT || '960', 10);
+
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(inputPath)
+      .outputOptions([
+        `-vf scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`,
+        '-c:v libx264',
+        '-preset ultrafast',
+        '-threads 1',
+        '-pix_fmt yuv420p',
+        '-an', // strip audio - narration gets muxed on separately later
+      ])
+      .on('end', () => resolve(outPath))
+      .on('error', reject)
+      .save(outPath);
+  });
+}
+
+/**
+ * Grabs the last frame of a video as a still image - used to extend a short AI-generated
+ * clip with a Ken Burns pan when the narration runs longer than the clip itself, so the
+ * motion continues from where the clip left off instead of jump-cutting to a static frame.
+ */
+async function extractLastFrame(videoPath, outPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(videoPath)
+      .inputOptions(['-sseof -1']) // seek to ~1s before end
+      .outputOptions(['-vframes 1', '-q:v 2'])
+      .on('end', () => resolve(outPath))
+      .on('error', reject)
+      .save(outPath);
+  });
+}
+
+/**
+ * Builds the silent (no audio yet) scene clip: a short AI-animated clip, extended with
+ * a Ken Burns pan on its last frame if the narration runs longer than the clip itself.
+ * Trims the clip down if narration is shorter. Narration audio gets muxed on afterward.
+ */
+async function buildScenePicture(rawClipPath, targetDurationSeconds, workDir, sceneTag) {
+  const clipDuration = await getDuration(rawClipPath);
+  const normalizedClipPath = path.join(workDir, `${sceneTag}-normalized.mp4`);
+  await normalizeVideo(rawClipPath, normalizedClipPath);
+
+  if (clipDuration >= targetDurationSeconds) {
+    // Clip is already long enough (or longer) - just trim it down
+    const trimmedPath = path.join(workDir, `${sceneTag}-trimmed.mp4`);
+    await new Promise((resolve, reject) => {
+      ffmpeg()
+        .input(normalizedClipPath)
+        .outputOptions(['-c copy', `-t ${targetDurationSeconds}`])
+        .on('end', () => resolve())
+        .on('error', reject)
+        .save(trimmedPath);
+    });
+    return trimmedPath;
+  }
+
+  // Clip is shorter than the narration - extend with a Ken Burns pan on its last frame
+  const remainingSeconds = targetDurationSeconds - clipDuration;
+  const lastFramePath = path.join(workDir, `${sceneTag}-lastframe.jpg`);
+  await extractLastFrame(normalizedClipPath, lastFramePath);
+
+  const extensionPath = path.join(workDir, `${sceneTag}-extension.mp4`);
+  await applyKenBurns(lastFramePath, remainingSeconds, extensionPath);
+
+  const combinedPath = path.join(workDir, `${sceneTag}-combined.mp4`);
+  await concatScenes([normalizedClipPath, extensionPath], combinedPath);
+  return combinedPath;
+}
+
 async function applyKenBurns(imagePath, durationSeconds, outPath) {
   const fps = 20; // lower fps = fewer frames to hold in memory during zoompan
   const width = parseInt(process.env.FRAME_WIDTH || '540', 10);
@@ -93,4 +172,12 @@ async function concatScenes(sceneClipPaths, outPath) {
   });
 }
 
-module.exports = { applyKenBurns, muxSceneAudioVideo, concatScenes, getDuration };
+module.exports = {
+  applyKenBurns,
+  muxSceneAudioVideo,
+  concatScenes,
+  getDuration,
+  normalizeVideo,
+  extractLastFrame,
+  buildScenePicture,
+};
