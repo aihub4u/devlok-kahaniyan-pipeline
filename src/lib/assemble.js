@@ -18,9 +18,9 @@ function getDuration(filePath) {
  * standard technique most story-narration channels use for illustrated content.
  */
 async function applyKenBurns(imagePath, durationSeconds, outPath) {
-  const fps = 25;
-  const width = parseInt(process.env.FRAME_WIDTH || '1080', 10);
-  const height = parseInt(process.env.FRAME_HEIGHT || '1920', 10);
+  const fps = 20; // lower fps = fewer frames to hold in memory during zoompan
+  const width = parseInt(process.env.FRAME_WIDTH || '540', 10);
+  const height = parseInt(process.env.FRAME_HEIGHT || '960', 10);
   const totalFrames = Math.round(durationSeconds * fps);
 
   // Slow, gentle zoom-in - subtle enough not to feel dizzying in a kids' story format
@@ -29,11 +29,13 @@ async function applyKenBurns(imagePath, durationSeconds, outPath) {
   return new Promise((resolve, reject) => {
     ffmpeg()
       .input(imagePath)
-      .inputOptions(['-loop 1'])
+      .inputOptions(['-loop 1', `-framerate ${fps}`])
       .outputOptions([
         `-vf scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},zoompan=z='${zoomExpr}':d=${totalFrames}:s=${width}x${height}:fps=${fps}`,
         '-pix_fmt yuv420p',
         `-t ${durationSeconds}`,
+        '-threads 1', // keep memory/CPU footprint predictable on small hosting instances
+        '-preset ultrafast', // lower encoder memory/CPU use, at a small quality cost
       ])
       .on('end', () => resolve(outPath))
       .on('error', reject)
@@ -57,12 +59,12 @@ async function muxSceneAudioVideo(videoPath, audioPath, outPath) {
         .input(videoPath)
         .inputOptions(['-stream_loop', '-1'])
         .input(audioPath)
-        .outputOptions(['-c:v libx264', '-c:a aac', '-shortest', `-t ${audioDuration}`]);
+        .outputOptions(['-c:v libx264', '-preset ultrafast', '-threads 1', '-c:a aac', '-shortest', `-t ${audioDuration}`]);
     } else {
       command
         .input(videoPath)
         .input(audioPath)
-        .outputOptions(['-c:v libx264', '-c:a aac', `-t ${audioDuration}`]);
+        .outputOptions(['-c:v libx264', '-preset ultrafast', '-threads 1', '-c:a aac', `-t ${audioDuration}`]);
     }
 
     command
