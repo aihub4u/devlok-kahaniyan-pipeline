@@ -6,23 +6,23 @@
   "scenes": [
     {
       "narration": "Long ago, in the little village of Gokul, there lived a mischievous boy named Krishna. He loved only one thing more than his friends - fresh, creamy butter.",
-      "motionPrompt": "Krishna walks playfully through a sunny village lane, looking around curiously, gentle camera pan, soft breeze moving his hair"
+      "sceneDescription": "Krishna standing playfully in a sunny village lane, looking around curiously, warm daylight, simple huts in the background"
     },
     {
       "narration": "One morning, Krishna crept quietly into a neighbor's kitchen, climbed onto a wooden stool, and reached into a clay pot of fresh butter.",
-      "motionPrompt": "Krishna tiptoes into a rustic kitchen, climbs a small wooden stool, reaches up toward a clay pot on a high shelf, mischievous expression"
+      "sceneDescription": "Krishna standing on a small wooden stool in a rustic kitchen, reaching up toward a clay pot on a high shelf, mischievous expression"
     },
     {
       "narration": "But Krishna did not eat the butter alone. He shared it with his friends and even left some for the poor children of the village who had none.",
-      "motionPrompt": "Krishna sits with a group of smiling children, happily sharing butter from the pot, warm and joyful atmosphere, soft golden light"
+      "sceneDescription": "Krishna sitting with a group of smiling children, happily sharing butter from a clay pot, warm and joyful atmosphere, soft golden light"
     },
     {
       "narration": "This story comes from the Bhagavata Purana, Book 10, Chapter 8. It teaches us that Krishna's butter stealing was never about greed - it was about sharing.",
-      "motionPrompt": "Krishna sits peacefully under a tree holding a flute, looking gently toward the viewer, calm and warm expression, soft ambient light"
+      "sceneDescription": "Krishna sitting peacefully under a tree holding a flute, looking gently toward the viewer, calm and warm expression, soft ambient light"
     },
     {
       "narration": "So the next time you have something you love, remember Krishna - the greatest joy comes from sharing it with others.",
-      "motionPrompt": "Krishna smiles warmly and waves toward the viewer, peacock feather gently swaying, soft zoom in, heartwarming close"
+      "sceneDescription": "Krishna smiling warmly and waving toward the viewer, peacock feather visible, heartwarming close-up portrait"
     }
   ]
 }

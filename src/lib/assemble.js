@@ -12,8 +12,38 @@ function getDuration(filePath) {
 }
 
 /**
- * Stretches/trims a silent video clip to match its narration audio length,
- * then muxes the two together into one scene clip with sound.
+ * Turns a still image into a video clip with slow zoom/pan motion (the "Ken Burns
+ * effect"), matched exactly to the given duration. This replaces paying for an AI
+ * video generation model - it's free (just local FFmpeg processing) and is the
+ * standard technique most story-narration channels use for illustrated content.
+ */
+async function applyKenBurns(imagePath, durationSeconds, outPath) {
+  const fps = 25;
+  const width = parseInt(process.env.FRAME_WIDTH || '1080', 10);
+  const height = parseInt(process.env.FRAME_HEIGHT || '1920', 10);
+  const totalFrames = Math.round(durationSeconds * fps);
+
+  // Slow, gentle zoom-in - subtle enough not to feel dizzying in a kids' story format
+  const zoomExpr = "min(zoom+0.0012,1.15)";
+
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(imagePath)
+      .inputOptions(['-loop 1'])
+      .outputOptions([
+        `-vf scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},zoompan=z='${zoomExpr}':d=${totalFrames}:s=${width}x${height}:fps=${fps}`,
+        '-pix_fmt yuv420p',
+        `-t ${durationSeconds}`,
+      ])
+      .on('end', () => resolve(outPath))
+      .on('error', reject)
+      .save(outPath);
+  });
+}
+
+/**
+ * Muxes narration audio onto a (silent) video clip, stretching/trimming to match
+ * if there's a small mismatch between the two durations.
  */
 async function muxSceneAudioVideo(videoPath, audioPath, outPath) {
   const audioDuration = await getDuration(audioPath);
@@ -23,7 +53,6 @@ async function muxSceneAudioVideo(videoPath, audioPath, outPath) {
     const command = ffmpeg();
 
     if (videoDuration < audioDuration) {
-      // Loop the video if the generated clip is shorter than the narration
       command
         .input(videoPath)
         .inputOptions(['-stream_loop', '-1'])
@@ -62,4 +91,4 @@ async function concatScenes(sceneClipPaths, outPath) {
   });
 }
 
-module.exports = { muxSceneAudioVideo, concatScenes, getDuration };
+module.exports = { applyKenBurns, muxSceneAudioVideo, concatScenes, getDuration };

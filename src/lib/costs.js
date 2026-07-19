@@ -1,20 +1,20 @@
 /**
  * Cost estimates, NOT exact billing.
  *
- * Replicate bills by actual compute time and Sarvam bills by characters, but neither
- * API returns a live dollar figure in the response. So this estimates cost using rates
- * YOU set in .env, based on what you see on your own Replicate/Sarvam billing dashboards.
+ * The pipeline only calls Replicate for STILL IMAGES now (no AI video generation model),
+ * so the only Replicate cost is per-image. Sarvam bills by characters. Neither API returns
+ * a live dollar figure in its response, so this estimates using rates YOU set in .env,
+ * based on what you see on your own Replicate/Sarvam billing dashboards.
  *
  * If a rate is left at 0 (unconfigured), that line just shows as "not configured"
- * rather than a misleading ₹0.
+ * rather than a misleading ₹0/$0.
  */
 
 function getRates() {
   return {
     sarvamPer1000Chars: parseFloat(process.env.SARVAM_COST_PER_1000_CHARS || '0'),
-    replicateImagePerSec: parseFloat(process.env.REPLICATE_IMAGE_COST_PER_SEC || '0'),
-    replicateVideoPerSec: parseFloat(process.env.REPLICATE_VIDEO_COST_PER_SEC || '0'),
-    currency: process.env.COST_CURRENCY || 'INR',
+    replicateImagePerImage: parseFloat(process.env.REPLICATE_IMAGE_COST_PER_IMAGE || '0'),
+    currency: process.env.COST_CURRENCY || 'USD',
   };
 }
 
@@ -24,11 +24,11 @@ function estimateSarvamCost(characterCount) {
   return (characterCount / 1000) * sarvamPer1000Chars;
 }
 
-function estimateReplicateCost(predictTimeSeconds, type) {
-  const rates = getRates();
-  const rate = type === 'image' ? rates.replicateImagePerSec : rates.replicateVideoPerSec;
-  if (!rate || predictTimeSeconds == null) return null;
-  return predictTimeSeconds * rate;
+// Flux Schnell (and most Replicate image models) bill a flat rate per image generated.
+function estimateReplicateImageCost(imageCount = 1) {
+  const { replicateImagePerImage } = getRates();
+  if (!replicateImagePerImage) return null;
+  return imageCount * replicateImagePerImage;
 }
 
 function sum(values) {
@@ -37,4 +37,4 @@ function sum(values) {
   return known.reduce((a, b) => a + b, 0);
 }
 
-module.exports = { getRates, estimateSarvamCost, estimateReplicateCost, sum };
+module.exports = { getRates, estimateSarvamCost, estimateReplicateImageCost, sum };

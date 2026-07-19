@@ -50,43 +50,39 @@ async function downloadFile(url, outPath) {
 }
 
 /**
- * Generates the locked Krishna reference image for the episode.
- * Reuse the SAME reference image across every scene's video generation
- * call below - this is what keeps Krishna looking consistent throughout.
- * Returns { path, predictTime }.
+ * Generates the locked Krishna reference image for the episode. This is the visual
+ * anchor - its exact wording gets reused as a prefix on every scene's prompt below,
+ * which is what keeps Krishna looking consistent without needing a trained LoRA or
+ * paying for image-to-image/reference-based video models.
  */
 async function generateReferenceImage(prompt, outPath) {
-  const { output, predictTime } = await runModel(process.env.REPLICATE_IMAGE_MODEL, {
+  const { output } = await runModel(process.env.REPLICATE_IMAGE_MODEL, {
     prompt,
-    aspect_ratio: '9:16', // portrait, matches Shorts/Reels; use "16:9" for long-form
+    aspect_ratio: process.env.IMAGE_ASPECT_RATIO || '9:16',
     output_format: 'png',
   });
 
   const imageUrl = Array.isArray(output) ? output[0] : output;
-  const filePath = await downloadFile(imageUrl, outPath);
-  return { path: filePath, predictTime };
+  return downloadFile(imageUrl, outPath);
 }
 
 /**
- * Animates the reference image into a short video clip for one scene.
- * `motionPrompt` describes the action for THIS scene only
- * (e.g. "Krishna reaches into a clay pot of butter and smiles").
- * Returns { path, predictTime }.
+ * Generates one still image for a scene. `referenceImagePrompt` (Krishna's locked
+ * look) is prepended verbatim so every scene shares the same character description -
+ * this text-level consistency is the low-cost substitute for a trained LoRA or a
+ * reference-conditioned video model.
  */
-async function generateSceneVideo(referenceImagePath, motionPrompt, outPath) {
-  // Replicate needs a public URL or base64 data URI for image inputs
-  const imageBuffer = fs.readFileSync(referenceImagePath);
-  const base64Image = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+async function generateSceneImage(referenceImagePrompt, sceneDescription, outPath) {
+  const combinedPrompt = `${referenceImagePrompt}. Scene: ${sceneDescription}`;
 
-  const { output, predictTime } = await runModel(process.env.REPLICATE_VIDEO_MODEL, {
-    image: base64Image,
-    prompt: motionPrompt,
-    resolution: '720p',
+  const { output } = await runModel(process.env.REPLICATE_IMAGE_MODEL, {
+    prompt: combinedPrompt,
+    aspect_ratio: process.env.IMAGE_ASPECT_RATIO || '9:16',
+    output_format: 'png',
   });
 
-  const videoUrl = Array.isArray(output) ? output[0] : output;
-  const filePath = await downloadFile(videoUrl, outPath);
-  return { path: filePath, predictTime };
+  const imageUrl = Array.isArray(output) ? output[0] : output;
+  return downloadFile(imageUrl, outPath);
 }
 
-module.exports = { runModel, generateReferenceImage, generateSceneVideo, downloadFile };
+module.exports = { runModel, generateReferenceImage, generateSceneImage, downloadFile };

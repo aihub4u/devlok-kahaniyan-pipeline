@@ -305,8 +305,8 @@ function addScene(narration = '', motionPrompt = '') {
     </div>
     <label>Narration (what Sarvam will speak)</label>
     <textarea class="narration">${narration}</textarea>
-    <label>Motion prompt (what Krishna does in this scene)</label>
-    <textarea class="motionPrompt">${motionPrompt}</textarea>
+    <label>Scene description (what the illustration shows)</label>
+    <textarea class="sceneDescription">${motionPrompt}</textarea>
   `;
   container.appendChild(div);
 }
@@ -344,7 +344,7 @@ function loadSample() {
 function buildPayload() {
   const scenes = Array.from(document.querySelectorAll('.scene')).map((el) => ({
     narration: el.querySelector('.narration').value.trim(),
-    motionPrompt: el.querySelector('.motionPrompt').value.trim(),
+    sceneDescription: el.querySelector('.sceneDescription').value.trim(),
   }));
 
   return {
@@ -374,8 +374,8 @@ async function submitEpisode() {
     return;
   }
   for (const s of payload.scenes) {
-    if (!s.narration || !s.motionPrompt) {
-      showError('Every scene needs both narration and a motion prompt.');
+    if (!s.narration || !s.sceneDescription) {
+      showError('Every scene needs both narration and a scene description.');
       return;
     }
   }
