@@ -25,8 +25,28 @@ generating a handful of episodes at a time rather than serving concurrent traffi
 ```bash
 npm install
 cp .env.example .env
-# then fill in SARVAM_API_KEY and REPLICATE_API_TOKEN in .env
+# then fill in ADMIN_USERNAME, ADMIN_PASSWORD, SARVAM_API_KEY, and REPLICATE_API_TOKEN in .env
 ```
+
+### Login
+
+The whole app (UI + API) is behind server-side HTTP Basic Auth. Set `ADMIN_USERNAME` and
+`ADMIN_PASSWORD` in your environment - the app will refuse to start serving requests without
+them (fails closed, not open). When you visit the site, your browser will show a native login
+prompt.
+
+### Cost Dashboard
+
+There's a "Cost Dashboard" tab in the UI showing estimated cost per episode (Sarvam + Replicate)
+and a running total. These are **estimates**, not real billing - Replicate/Sarvam don't return
+live pricing in their API responses, so the app estimates using:
+- Replicate: actual compute time returned by the API × the rate you set in `REPLICATE_IMAGE_COST_PER_SEC`
+  / `REPLICATE_VIDEO_COST_PER_SEC`
+- Sarvam: character count sent × the rate you set in `SARVAM_COST_PER_1000_CHARS`
+
+Check your actual current rates on Replicate's model pages and Sarvam's pricing page, and set
+those env vars accordingly. Leave a rate at `0` and that cost line just shows as unconfigured
+instead of a misleading number.
 
 Install ffmpeg if you don't already have it:
 

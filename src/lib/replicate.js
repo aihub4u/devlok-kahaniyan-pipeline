@@ -11,8 +11,8 @@ const headers = () => ({
 
 /**
  * Kicks off a prediction and polls until it's done.
- * Works for any Replicate model - pass the model string ("owner/model")
- * and the input object that model expects.
+ * Returns { output, predictTime } - predictTime (seconds) is used for cost estimation,
+ * since Replicate bills by compute time, not per-call.
  */
 async function runModel(model, input) {
   const create = await axios.post(
@@ -35,7 +35,11 @@ async function runModel(model, input) {
     throw new Error(`Replicate prediction failed: ${JSON.stringify(prediction.error)}`);
   }
 
-  return prediction.output;
+  const predictTime = prediction.metrics && prediction.metrics.predict_time
+    ? prediction.metrics.predict_time
+    : null;
+
+  return { output: prediction.output, predictTime };
 }
 
 async function downloadFile(url, outPath) {
@@ -49,36 +53,40 @@ async function downloadFile(url, outPath) {
  * Generates the locked Krishna reference image for the episode.
  * Reuse the SAME reference image across every scene's video generation
  * call below - this is what keeps Krishna looking consistent throughout.
+ * Returns { path, predictTime }.
  */
 async function generateReferenceImage(prompt, outPath) {
-  const output = await runModel(process.env.REPLICATE_IMAGE_MODEL, {
+  const { output, predictTime } = await runModel(process.env.REPLICATE_IMAGE_MODEL, {
     prompt,
     aspect_ratio: '9:16', // portrait, matches Shorts/Reels; use "16:9" for long-form
     output_format: 'png',
   });
 
   const imageUrl = Array.isArray(output) ? output[0] : output;
-  return downloadFile(imageUrl, outPath);
+  const filePath = await downloadFile(imageUrl, outPath);
+  return { path: filePath, predictTime };
 }
 
 /**
  * Animates the reference image into a short video clip for one scene.
  * `motionPrompt` describes the action for THIS scene only
  * (e.g. "Krishna reaches into a clay pot of butter and smiles").
+ * Returns { path, predictTime }.
  */
 async function generateSceneVideo(referenceImagePath, motionPrompt, outPath) {
   // Replicate needs a public URL or base64 data URI for image inputs
   const imageBuffer = fs.readFileSync(referenceImagePath);
   const base64Image = `data:image/png;base64,${imageBuffer.toString('base64')}`;
 
-  const output = await runModel(process.env.REPLICATE_VIDEO_MODEL, {
+  const { output, predictTime } = await runModel(process.env.REPLICATE_VIDEO_MODEL, {
     image: base64Image,
     prompt: motionPrompt,
     resolution: '720p',
   });
 
   const videoUrl = Array.isArray(output) ? output[0] : output;
-  return downloadFile(videoUrl, outPath);
+  const filePath = await downloadFile(videoUrl, outPath);
+  return { path: filePath, predictTime };
 }
 
 module.exports = { runModel, generateReferenceImage, generateSceneVideo, downloadFile };

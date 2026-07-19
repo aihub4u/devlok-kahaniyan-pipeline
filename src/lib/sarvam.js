@@ -5,7 +5,7 @@ const path = require('path');
 /**
  * Generates narration audio for one block of text using Sarvam TTS.
  * Docs: https://docs.sarvam.ai/api-reference-docs/text-to-speech/convert
- * Returns the local file path of the saved .wav audio.
+ * Returns { path, characterCount } - characterCount is used for cost estimation.
  */
 async function generateVoiceover(text, outPath) {
   const response = await axios.post(
@@ -36,7 +36,7 @@ async function generateVoiceover(text, outPath) {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, buffer);
 
-  return outPath;
+  return { path: outPath, characterCount: text.length };
 }
 
 module.exports = { generateVoiceover };

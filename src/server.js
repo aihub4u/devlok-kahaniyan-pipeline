@@ -1,13 +1,19 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { generateEpisode } = require('./pipeline');
+const { requireAuth } = require('./middleware/auth');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR || './output';
+const COST_LOG_PATH = path.join(OUTPUT_DIR, 'cost-log.json');
+
+// Everything below this line requires login - the browser will show a native prompt
+app.use(requireAuth);
 
 // Serve the frontend UI at "/"
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -39,12 +45,15 @@ app.post('/episodes', (req, res) => {
     job.progress = pct;
     job.message = message;
   })
-    .then((result) => {
+    .then(({ finalOutputPath, costBreakdown }) => {
       const job = jobs.get(jobId);
       job.state = 'completed';
       // Convert the local file path into a URL the frontend <video> tag can load
-      const relativePath = path.relative(path.resolve(OUTPUT_DIR), result.finalOutputPath);
-      job.result = { videoUrl: `/videos/${relativePath.split(path.sep).join('/')}` };
+      const relativePath = path.relative(path.resolve(OUTPUT_DIR), finalOutputPath);
+      job.result = {
+        videoUrl: `/videos/${relativePath.split(path.sep).join('/')}`,
+        costBreakdown,
+      };
     })
     .catch((err) => {
       const job = jobs.get(jobId);
@@ -60,6 +69,25 @@ app.get('/episodes/:jobId', (req, res) => {
   if (!job) return res.status(404).json({ error: 'job not found' });
   res.json(job);
 });
+
+// Cost dashboard data - every completed episode's cost breakdown, oldest first
+app.get('/costs', (req, res) => {
+  if (!fs.existsSync(COST_LOG_PATH)) {
+    return res.json({ entries: [], rateWarning: checkRatesConfigured() });
+  }
+  const entries = JSON.parse(fs.readFileSync(COST_LOG_PATH, 'utf-8'));
+  res.json({ entries, rateWarning: checkRatesConfigured() });
+});
+
+function checkRatesConfigured() {
+  const missing = [];
+  if (!parseFloat(process.env.SARVAM_COST_PER_1000_CHARS || '0')) missing.push('SARVAM_COST_PER_1000_CHARS');
+  if (!parseFloat(process.env.REPLICATE_IMAGE_COST_PER_SEC || '0')) missing.push('REPLICATE_IMAGE_COST_PER_SEC');
+  if (!parseFloat(process.env.REPLICATE_VIDEO_COST_PER_SEC || '0')) missing.push('REPLICATE_VIDEO_COST_PER_SEC');
+  return missing.length > 0
+    ? `Cost rates not fully configured: ${missing.join(', ')}. Set these in your environment based on your actual billing dashboards for accurate estimates.`
+    : null;
+}
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Devlok Kahaniyan running at http://localhost:${PORT}`));

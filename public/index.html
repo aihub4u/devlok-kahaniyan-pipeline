@@ -128,6 +128,23 @@
     font-size: 13px;
   }
   .hint { font-size: 12px; color: #8a7d68; margin-top: 4px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+  .tab-btn {
+    background: white;
+    border: 1.5px solid #e3d9c8;
+    color: var(--peacock-dark);
+    padding: 9px 18px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .tab-btn.active { background: var(--peacock); color: white; border-color: var(--peacock); }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+  th { text-align: left; color: var(--peacock-dark); padding: 8px 6px; border-bottom: 2px solid #e3d9c8; }
+  td { padding: 8px 6px; border-bottom: 1px solid #f0e6d2; }
+  .cost-inline { margin-top: 10px; font-size: 13px; color: var(--peacock-dark); }
+  #costWarningCard { background: #fbf3e3; border-color: var(--gold); color: #7a5b1e; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -138,6 +155,12 @@
 </header>
 
 <main>
+  <div class="tabs">
+    <button class="tab-btn active" id="tabGenerateBtn" onclick="showTab('generate')">Generate</button>
+    <button class="tab-btn" id="tabCostsBtn" onclick="showTab('costs')">Cost Dashboard</button>
+  </div>
+
+  <div id="generateTab">
   <div class="card">
     <label>Episode ID</label>
     <input type="text" id="episodeId" placeholder="s1e01-makhan-chor" />
@@ -173,10 +196,100 @@
   <div id="resultWrap" class="card">
     <video id="resultVideo" controls></video>
     <a class="btn btn-primary" id="downloadLink" href="#" download>Download video</a>
+    <div id="episodeCostSummary" class="cost-inline"></div>
+  </div>
+  </div><!-- /#generateTab -->
+
+  <div id="costsTab" style="display:none;">
+    <div class="card" id="costWarningCard" style="display:none;"></div>
+    <div class="card">
+      <strong style="color: var(--peacock-dark);">Per-episode cost</strong>
+      <div class="hint" style="margin-bottom: 10px;">
+        Estimates based on Replicate compute time and Sarvam character count, multiplied by the
+        rates you set in your environment. Not exact billing — check your Replicate and Sarvam
+        dashboards for actual charges.
+      </div>
+      <table id="costsTable">
+        <thead>
+          <tr>
+            <th>Episode</th>
+            <th>Date</th>
+            <th>Sarvam (est.)</th>
+            <th>Replicate (est.)</th>
+            <th>Total (est.)</th>
+          </tr>
+        </thead>
+        <tbody id="costsTableBody"></tbody>
+      </table>
+      <div id="costsEmpty" class="hint" style="display:none;">No episodes generated yet.</div>
+    </div>
+    <div class="card" id="runningTotalCard">
+      <strong style="color: var(--peacock-dark);">Running total</strong>
+      <div id="runningTotal" style="font-size: 22px; font-weight: 700; color: var(--coral); margin-top: 8px;">—</div>
+    </div>
   </div>
 </main>
 
 <script>
+function showTab(tab) {
+  document.getElementById('generateTab').style.display = tab === 'generate' ? 'block' : 'none';
+  document.getElementById('costsTab').style.display = tab === 'costs' ? 'block' : 'none';
+  document.getElementById('tabGenerateBtn').classList.toggle('active', tab === 'generate');
+  document.getElementById('tabCostsBtn').classList.toggle('active', tab === 'costs');
+  if (tab === 'costs') loadCosts();
+}
+
+function formatCost(value, currency) {
+  if (value == null) return '—';
+  return `${currency === 'INR' ? '₹' : currency} ${value.toFixed(2)}`;
+}
+
+async function loadCosts() {
+  const res = await fetch('/costs');
+  const data = await res.json();
+
+  const warningCard = document.getElementById('costWarningCard');
+  if (data.rateWarning) {
+    warningCard.textContent = '⚠️ ' + data.rateWarning;
+    warningCard.style.display = 'block';
+  } else {
+    warningCard.style.display = 'none';
+  }
+
+  const tbody = document.getElementById('costsTableBody');
+  tbody.innerHTML = '';
+  document.getElementById('costsEmpty').style.display = data.entries.length === 0 ? 'block' : 'none';
+
+  let runningTotal = 0;
+  let anyKnown = false;
+
+  data.entries.forEach((entry) => {
+    const sarvamTotal = entry.scenes.reduce((sum, s) => sum + (s.sarvamEstCost || 0), 0);
+    const replicateTotal =
+      (entry.referenceImage?.estCost || 0) +
+      entry.scenes.reduce((sum, s) => sum + (s.videoEstCost || 0), 0);
+
+    if (entry.totalEstCost != null) {
+      runningTotal += entry.totalEstCost;
+      anyKnown = true;
+    }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${entry.title || entry.episodeId}</td>
+      <td>${new Date(entry.generatedAt).toLocaleString()}</td>
+      <td>${formatCost(sarvamTotal || null, entry.currency)}</td>
+      <td>${formatCost(replicateTotal || null, entry.currency)}</td>
+      <td><strong>${formatCost(entry.totalEstCost, entry.currency)}</strong></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('runningTotal').textContent = anyKnown
+    ? formatCost(runningTotal, data.entries[0]?.currency || 'INR')
+    : 'Not enough data — configure cost rates in your environment';
+}
+
 let sceneCount = 0;
 
 function addScene(narration = '', motionPrompt = '') {
@@ -308,6 +421,14 @@ async function pollJob(jobId) {
     document.getElementById('resultVideo').src = videoUrl;
     document.getElementById('downloadLink').href = videoUrl;
     document.getElementById('resultWrap').style.display = 'block';
+
+    const cost = job.result.costBreakdown;
+    const summaryEl = document.getElementById('episodeCostSummary');
+    if (cost && cost.totalEstCost != null) {
+      summaryEl.textContent = `Estimated cost for this episode: ${formatCost(cost.totalEstCost, cost.currency)} (see Cost Dashboard tab for the full breakdown)`;
+    } else {
+      summaryEl.textContent = 'Cost tracking isn\'t fully configured yet — set the rate env vars to see estimates here.';
+    }
     return;
   }
 
